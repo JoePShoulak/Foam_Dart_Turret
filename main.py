@@ -20,12 +20,18 @@ DOWN_2 = CSI + "2E"
 BLUE_TEXT = CSI + "34m"
 GREEN_TEXT = CSI + "32m"
 YELLOW_TEXT = CSI + "33m"
+CYAN_TEXT = CSI + "36m"
+MAGENTA_TEXT = CSI + "35m"  # Magenta for terminal
+EYE_TO_MOUTH_COLOR_TEXT = CSI + "31m"  # Red for terminal
 RESET_TEXT = CSI + "0m"
 
-# Video Line Colors
+# Video Line Colors (matching terminal colors as closely as possible)
 BLUE_RGB = (255, 0, 0)  # Blue line for IPD
 GREEN_RGB = (0, 255, 0)  # Green line for Mouth Width
-YELLOW_RGB = (0, 255, 255)  # Yellow line for Nose-to-Chin
+YELLOW_RGB = (0, 255, 255)  # Yellow line for Nose Width
+CYAN_RGB = (255, 255, 0)  # Cyan line for Nose-to-Chin
+MAGENTA_RGB = (255, 0, 255)  # Magenta for video line
+EYE_TO_MOUTH_COLOR_RGB = (0, 0, 255)  # Red for video line
 
 # Symbols
 BLOCK_CHAR = "█"
@@ -36,15 +42,17 @@ RIGHT_EYE_IDS = [362, 263, 386, 374]
 MOUTH_CORNER_IDS = [61, 291]
 NOSE_TIP_ID = 1
 CHIN_ID = 152
+NOSE_WIDTH_IDS = [49, 279]  # Left and Right edges of the nose
+FACE_WIDTH_IDS = [234, 454]  # Left and right edges of the face
 
 ########################################
 
 # Parse arguments
-parser = argparse.ArgumentParser(description="Run face detection with IPD, mouth width, and nose-to-chin distance, optionally show face mesh.")
+parser = argparse.ArgumentParser(description="Run face detection with IPD, mouth width, and other biometrics, optionally show face mesh.")
 parser.add_argument("--mesh", action="store_true", help="Draw the face mesh under the biometric lines")
 args = parser.parse_args()
 
-print("Initializing Mediapipe and Webcam...", end="", flush=True)
+print("Initializing Mediapipe and Webcam...", end="")
 # Suppress Mediapipe logs by redirecting stderr
 sys.stderr = open(os.devnull, 'w')
 
@@ -96,7 +104,7 @@ def get_eye_center(landmarks, frame_shape):
     center_y = sum(p[1] for p in eye_pixel) / len(eye_pixel)
     return int(center_x), int(center_y)
 
-def print_stats_tabular(ipd, mouth_width, nose_chin_distance):
+def print_stats_tabular(ipd, mouth_width, nose_chin_distance, nose_width, face_width, eye_to_mouth):
     """Print stats in a tabular form with color-coded squares to the terminal."""
     print(CURSOR_HOME, end="")
     print(DOWN_2, end="")
@@ -104,7 +112,10 @@ def print_stats_tabular(ipd, mouth_width, nose_chin_distance):
     data = [
         ("Interpupillary Distance (IPD):", f"{ipd:.2f} px", BLUE_TEXT),
         ("Mouth Width:", f"{mouth_width:.2f} px", GREEN_TEXT),
-        ("Nose-to-Chin Distance:", f"{nose_chin_distance:.2f} px", YELLOW_TEXT),
+        ("Nose-to-Chin Distance:", f"{nose_chin_distance:.2f} px", CYAN_TEXT),
+        ("Nose Width:", f"{nose_width:.2f} px", YELLOW_TEXT),
+        ("Face Width:", f"{face_width:.2f} px", MAGENTA_TEXT),
+        ("Eye-to-Mouth Distance:", f"{eye_to_mouth:.2f} px", EYE_TO_MOUTH_COLOR_TEXT),  # New biometric
     ]
 
     max_label_len = max(len(label) for (label, value, color) in data)
@@ -136,6 +147,10 @@ try:
 
                 left_eye_pixel = get_eye_center(left_eye_landmarks, frame.shape)
                 right_eye_pixel = get_eye_center(right_eye_landmarks, frame.shape)
+                eye_center = (
+                    (left_eye_pixel[0] + right_eye_pixel[0]) // 2,
+                    (left_eye_pixel[1] + right_eye_pixel[1]) // 2,
+                )
                 ipd = calculate_distance(left_eye_pixel, right_eye_pixel)
 
                 # Extract mouth landmarks
@@ -145,12 +160,35 @@ try:
                     [left_mouth_corner, right_mouth_corner], frame.shape
                 )
                 mouth_width = calculate_distance(left_mouth_pixel, right_mouth_pixel)
+                mouth_center = (
+                    (left_mouth_pixel[0] + right_mouth_pixel[0]) // 2,
+                    (left_mouth_pixel[1] + right_mouth_pixel[1]) // 2,
+                )
 
                 # Extract nose-to-chin landmarks
                 nose_tip = face_landmarks.landmark[NOSE_TIP_ID]
                 chin = face_landmarks.landmark[CHIN_ID]
                 nose_pixel, chin_pixel = get_landmark_pixel([nose_tip, chin], frame.shape)
                 nose_chin_distance = calculate_distance(nose_pixel, chin_pixel)
+
+                # Extract nose width landmarks
+                left_nose_edge = face_landmarks.landmark[NOSE_WIDTH_IDS[0]]
+                right_nose_edge = face_landmarks.landmark[NOSE_WIDTH_IDS[1]]
+                left_nose_pixel, right_nose_pixel = get_landmark_pixel(
+                    [left_nose_edge, right_nose_edge], frame.shape
+                )
+                nose_width = calculate_distance(left_nose_pixel, right_nose_pixel)
+
+                # Extract face width landmarks
+                left_face_edge = face_landmarks.landmark[FACE_WIDTH_IDS[0]]
+                right_face_edge = face_landmarks.landmark[FACE_WIDTH_IDS[1]]
+                left_face_pixel, right_face_pixel = get_landmark_pixel(
+                    [left_face_edge, right_face_edge], frame.shape
+                )
+                face_width = calculate_distance(left_face_pixel, right_face_pixel)
+
+                # Calculate Eye-to-Mouth Distance
+                eye_to_mouth = calculate_distance(eye_center, mouth_center)
 
                 # If --mesh is enabled, draw the face mesh underneath
                 if args.mesh:
@@ -165,19 +203,20 @@ try:
                 # Draw lines on the video frame
                 cv2.line(frame, left_eye_pixel, right_eye_pixel, BLUE_RGB, 2)  # IPD line
                 cv2.line(frame, left_mouth_pixel, right_mouth_pixel, GREEN_RGB, 2)  # Mouth Width line
-                cv2.line(frame, nose_pixel, chin_pixel, YELLOW_RGB, 2)  # Nose-to-Chin line
+                cv2.line(frame, nose_pixel, chin_pixel, CYAN_RGB, 2)  # Nose-to-Chin line
+                cv2.line(frame, left_nose_pixel, right_nose_pixel, YELLOW_RGB, 2)  # Nose Width line
+                cv2.line(frame, left_face_pixel, right_face_pixel, MAGENTA_RGB, 2)  # Face Width line
+                cv2.line(frame, eye_center, mouth_center, EYE_TO_MOUTH_COLOR_RGB, 2)  # Eye-to-Mouth line
 
-        if ipd and mouth_width and nose_chin_distance:
+        if ipd and mouth_width and nose_chin_distance and nose_width and face_width and eye_to_mouth:
             initial_iterations += 1
-            # After a couple iterations, we assume logs have appeared and we can now clear
             if initial_iterations == 2 and not cleared_screen:
-                # Clear and print title now that logs hopefully won't appear anymore
                 print(CLEAR_SCREEN_HOME, end="")
                 print("Foam Dart Turret\n")
                 cleared_screen = True
                 after_clear = True
 
-            print_stats_tabular(ipd, mouth_width, nose_chin_distance)
+            print_stats_tabular(ipd, mouth_width, nose_chin_distance, nose_width, face_width, eye_to_mouth)
 
         cv2.imshow("Face Detection with Landmarks", frame)
         key = cv2.waitKey(1)
