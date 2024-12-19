@@ -18,7 +18,7 @@ mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, min_detection_confidence=0.5)
 
 # Function to display stats and a face sketch
-def display_stats_and_sketch(ipd):
+def display_stats_and_sketch(ipd, mouth_width):
     # Create a resized canvas for stats and sketch (adjusted dimensions)
     stats_window = np.ones((600, 1200, 3), dtype=np.uint8) * 255
 
@@ -28,7 +28,7 @@ def display_stats_and_sketch(ipd):
     cv2.ellipse(stats_window, head_center, head_axes, 0, 0, 360, (0, 0, 0), 2, cv2.LINE_AA)
 
     # Adjust eyeline position to represent eye level
-    eyeline_y = head_center[1] - 90  # Move upward closer to the top of the ellipse
+    eyeline_y = head_center[1] - 45  # Move upward closer to the top of the ellipse
     eye_x_offset = int(ipd / 2)  # Half the IPD determines the horizontal offset
     left_eye_sketch = (head_center[0] - eye_x_offset, eyeline_y)
     right_eye_sketch = (head_center[0] + eye_x_offset, eyeline_y)
@@ -38,11 +38,25 @@ def display_stats_and_sketch(ipd):
     cv2.circle(stats_window, right_eye_sketch, 8, (0, 0, 0), -1, cv2.LINE_AA)
     cv2.line(stats_window, left_eye_sketch, right_eye_sketch, (255, 0, 0), 3, cv2.LINE_AA)
 
-    # Display stats text in the right column
-    text = [f"Interpupillary Distance (IPD): {ipd:.2f} px"]
+    # Adjust mouth line position to represent mouth level
+    mouthline_y = head_center[1] + 50  # Move downward to where the mouth is approximately located
+    mouth_x_offset = int(mouth_width / 2)  # Half the mouth width determines the horizontal offset
+    left_mouth_sketch = (head_center[0] - mouth_x_offset, mouthline_y)
+    right_mouth_sketch = (head_center[0] + mouth_x_offset, mouthline_y)
 
-    # Position the stats slightly left and vertically centered in the right column
-    text_start_x = 700  # Start closer to the center
+    # Draw mouth line and vertices
+    cv2.circle(stats_window, left_mouth_sketch, 8, (0, 0, 0), -1, cv2.LINE_AA)
+    cv2.circle(stats_window, right_mouth_sketch, 8, (0, 0, 0), -1, cv2.LINE_AA)
+    cv2.line(stats_window, left_mouth_sketch, right_mouth_sketch, (255, 0, 0), 3, cv2.LINE_AA)
+
+    # Display stats text in the right column
+    text = [
+        f"Interpupillary Distance (IPD): {ipd:.2f} px",
+        f"Mouth Width: {mouth_width:.2f} px",
+    ]
+
+    # Position the stats further left to avoid being cut off
+    text_start_x = 650  # Move the text more left
     text_start_y = 300 - (len(text) * 30 // 2)  # Center vertically
     text_line_height = 30
     for i, line in enumerate(text):
@@ -105,11 +119,34 @@ while True:
                 + (right_eye_pixel[1] - left_eye_pixel[1]) ** 2
             )
 
+            # Get mouth corners
+            left_mouth_corner = face_landmarks.landmark[61]
+            right_mouth_corner = face_landmarks.landmark[291]
+
+            # Convert normalized coordinates to pixel coordinates for mouth corners
+            left_mouth_pixel = (
+                int(left_mouth_corner.x * frame.shape[1]),
+                int(left_mouth_corner.y * frame.shape[0]),
+            )
+            right_mouth_pixel = (
+                int(right_mouth_corner.x * frame.shape[1]),
+                int(right_mouth_corner.y * frame.shape[0]),
+            )
+
+            # Calculate the Euclidean distance between the mouth corners
+            mouth_width = math.sqrt(
+                (right_mouth_pixel[0] - left_mouth_pixel[0]) ** 2
+                + (right_mouth_pixel[1] - left_mouth_pixel[1]) ** 2
+            )
+
             # Draw the line between eyes on the video frame
             cv2.line(frame, left_eye_pixel, right_eye_pixel, (255, 0, 0), 2)
 
+            # Draw the line between mouth corners
+            cv2.line(frame, left_mouth_pixel, right_mouth_pixel, (255, 0, 0), 2)
+
             # Display stats and a fixed sketch
-            display_stats_and_sketch(ipd)
+            display_stats_and_sketch(ipd, mouth_width)
 
     # Display the video feed with landmarks
     cv2.imshow("Face Detection with Landmarks", frame)
