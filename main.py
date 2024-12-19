@@ -17,59 +17,75 @@ if not video_capture.isOpened():
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, min_detection_confidence=0.5)
 
-# Function to display stats and a face sketch
+
+# Helper Functions
+def get_landmark_pixel(landmarks, frame_shape):
+    """Convert normalized landmarks to pixel coordinates."""
+    return [
+        (int(landmark.x * frame_shape[1]), int(landmark.y * frame_shape[0]))
+        for landmark in landmarks
+    ]
+
+
+def calculate_distance(point1, point2):
+    """Calculate the Euclidean distance between two points."""
+    return math.sqrt((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
+
+
+def get_eye_center(landmarks, frame_shape):
+    """Calculate the center of the eye from its landmarks."""
+    eye_pixel = get_landmark_pixel(landmarks, frame_shape)
+    center_x = sum([point[0] for point in eye_pixel]) / len(eye_pixel)
+    center_y = sum([point[1] for point in eye_pixel]) / len(eye_pixel)
+    return int(center_x), int(center_y)
+
+
 def display_stats_and_sketch(ipd, mouth_width):
-    # Create a resized canvas for stats and sketch (adjusted dimensions)
+    """Display stats and draw a face sketch."""
     stats_window = np.ones((600, 1200, 3), dtype=np.uint8) * 255
 
     # Draw an ellipse to represent the head in the left column
-    head_center = (300, 300)  # Center of the "head" in the left column
-    head_axes = (120, 180)  # Width and height of the ellipse
+    head_center = (300, 300)
+    head_axes = (120, 180)
     cv2.ellipse(stats_window, head_center, head_axes, 0, 0, 360, (0, 0, 0), 2, cv2.LINE_AA)
 
-    # Adjust eyeline position to represent eye level
-    eyeline_y = head_center[1] - 45  # Move upward closer to the top of the ellipse
-    eye_x_offset = int(ipd / 2)  # Half the IPD determines the horizontal offset
+    # Eyeline and sketch
+    eyeline_y = head_center[1] - 45
+    eye_x_offset = int(ipd / 2)
     left_eye_sketch = (head_center[0] - eye_x_offset, eyeline_y)
     right_eye_sketch = (head_center[0] + eye_x_offset, eyeline_y)
-
-    # Draw eyes and line between them
     cv2.circle(stats_window, left_eye_sketch, 8, (0, 0, 0), -1, cv2.LINE_AA)
     cv2.circle(stats_window, right_eye_sketch, 8, (0, 0, 0), -1, cv2.LINE_AA)
     cv2.line(stats_window, left_eye_sketch, right_eye_sketch, (255, 0, 0), 3, cv2.LINE_AA)
 
-    # Adjust mouth line position to represent mouth level
-    mouthline_y = head_center[1] + 50  # Move downward to where the mouth is approximately located
-    mouth_x_offset = int(mouth_width / 2)  # Half the mouth width determines the horizontal offset
+    # Mouth line and sketch
+    mouthline_y = head_center[1] + 50
+    mouth_x_offset = int(mouth_width / 2)
     left_mouth_sketch = (head_center[0] - mouth_x_offset, mouthline_y)
     right_mouth_sketch = (head_center[0] + mouth_x_offset, mouthline_y)
-
-    # Draw mouth line and vertices
     cv2.circle(stats_window, left_mouth_sketch, 8, (0, 0, 0), -1, cv2.LINE_AA)
     cv2.circle(stats_window, right_mouth_sketch, 8, (0, 0, 0), -1, cv2.LINE_AA)
     cv2.line(stats_window, left_mouth_sketch, right_mouth_sketch, (255, 0, 0), 3, cv2.LINE_AA)
 
-    # Display stats text in the right column
+    # Display stats text
     text = [
         f"Interpupillary Distance (IPD): {ipd:.2f} px",
         f"Mouth Width: {mouth_width:.2f} px",
     ]
-
-    # Position the stats further left to avoid being cut off
-    text_start_x = 650  # Move the text more left
-    text_start_y = 300 - (len(text) * 30 // 2)  # Center vertically
+    text_start_x = 650
+    text_start_y = 300 - (len(text) * 30 // 2)
     text_line_height = 30
     for i, line in enumerate(text):
-        cv2.putText(stats_window, line, (text_start_x, text_start_y + i * text_line_height), cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 0), 1, cv2.LINE_AA)
+        cv2.putText(stats_window, line, (text_start_x, text_start_y + i * text_line_height),
+                    cv2.FONT_HERSHEY_TRIPLEX, 0.8, (0, 0, 0), 1, cv2.LINE_AA)
 
-    # Show the stats and sketch window
     cv2.imshow("Stats and Sketch", stats_window)
+
 
 # Main Loop
 while True:
     # Grab a single frame of video
     ret, frame = video_capture.read()
-
     if not ret:
         print("Failed to grab frame. Exiting.")
         break
@@ -80,88 +96,43 @@ while True:
     # Detect faces and landmarks
     results = face_mesh.process(rgb_frame)
 
-    # Draw landmarks and calculate stats if faces are detected
     if results.multi_face_landmarks:
         for face_landmarks in results.multi_face_landmarks:
-            # Get left eye center
-            left_eye = [
-                face_landmarks.landmark[i]
-                for i in [33, 133, 159, 145]  # IDs for key left eye points
-            ]
-            left_eye_center = (
-                sum([point.x for point in left_eye]) / len(left_eye),
-                sum([point.y for point in left_eye]) / len(left_eye),
-            )
+            # Get eye landmarks
+            left_eye_landmarks = [face_landmarks.landmark[i] for i in [33, 133, 159, 145]]
+            right_eye_landmarks = [face_landmarks.landmark[i] for i in [362, 263, 386, 374]]
 
-            # Get right eye center
-            right_eye = [
-                face_landmarks.landmark[i]
-                for i in [362, 263, 386, 374]  # IDs for key right eye points
-            ]
-            right_eye_center = (
-                sum([point.x for point in right_eye]) / len(right_eye),
-                sum([point.y for point in right_eye]) / len(right_eye),
-            )
+            # Get eye centers
+            left_eye_pixel = get_eye_center(left_eye_landmarks, frame.shape)
+            right_eye_pixel = get_eye_center(right_eye_landmarks, frame.shape)
 
-            # Convert normalized coordinates to pixel coordinates
-            left_eye_pixel = (
-                int(left_eye_center[0] * frame.shape[1]),
-                int(left_eye_center[1] * frame.shape[0]),
-            )
-            right_eye_pixel = (
-                int(right_eye_center[0] * frame.shape[1]),
-                int(right_eye_center[1] * frame.shape[0]),
-            )
+            # Calculate IPD
+            ipd = calculate_distance(left_eye_pixel, right_eye_pixel)
 
-            # Calculate the Euclidean distance between the eyes
-            ipd = math.sqrt(
-                (right_eye_pixel[0] - left_eye_pixel[0]) ** 2
-                + (right_eye_pixel[1] - left_eye_pixel[1]) ** 2
-            )
-
-            # Get mouth corners
+            # Get mouth landmarks
             left_mouth_corner = face_landmarks.landmark[61]
             right_mouth_corner = face_landmarks.landmark[291]
+            left_mouth_pixel, right_mouth_pixel = get_landmark_pixel([left_mouth_corner, right_mouth_corner], frame.shape)
 
-            # Convert normalized coordinates to pixel coordinates for mouth corners
-            left_mouth_pixel = (
-                int(left_mouth_corner.x * frame.shape[1]),
-                int(left_mouth_corner.y * frame.shape[0]),
-            )
-            right_mouth_pixel = (
-                int(right_mouth_corner.x * frame.shape[1]),
-                int(right_mouth_corner.y * frame.shape[0]),
-            )
+            # Calculate mouth width
+            mouth_width = calculate_distance(left_mouth_pixel, right_mouth_pixel)
 
-            # Calculate the Euclidean distance between the mouth corners
-            mouth_width = math.sqrt(
-                (right_mouth_pixel[0] - left_mouth_pixel[0]) ** 2
-                + (right_mouth_pixel[1] - left_mouth_pixel[1]) ** 2
-            )
-
-            # Draw the line between eyes on the video frame
+            # Draw lines on video
             cv2.line(frame, left_eye_pixel, right_eye_pixel, (255, 0, 0), 2)
-
-            # Draw the line between mouth corners
             cv2.line(frame, left_mouth_pixel, right_mouth_pixel, (255, 0, 0), 2)
 
-            # Display stats and a fixed sketch
+            # Display stats and sketch
             display_stats_and_sketch(ipd, mouth_width)
 
-    # Display the video feed with landmarks
     cv2.imshow("Face Detection with Landmarks", frame)
 
-    # Ensure proper event loop handling
-    key = cv2.waitKey(1)  # This processes OpenCV window events
-
-    # Check if either window is closed manually
+    key = cv2.waitKey(1)
     if cv2.getWindowProperty("Face Detection with Landmarks", cv2.WND_PROP_VISIBLE) < 1 or \
        cv2.getWindowProperty("Stats and Sketch", cv2.WND_PROP_VISIBLE) < 1:
         print("Window closed manually. Exiting...")
         break
 
-# Release Mediapipe resources
+# Release resources
 face_mesh.close()
-# Release handle to the webcam and destroy all windows
 video_capture.release()
 cv2.destroyAllWindows()
