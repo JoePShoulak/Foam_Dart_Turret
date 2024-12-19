@@ -6,16 +6,23 @@ import mediapipe as mp
 import math
 import numpy as np
 import sys
+import argparse
 
-# Print initializing message
-print("initializing")
+########################################
+# Constants
+########################################
+# ANSI and Character Constants
+CSI = "\033["
+CLEAR_SCREEN_HOME = CSI + "2J" + CSI + "H"  # Clear screen and move cursor home
+CURSOR_HOME = CSI + "H"
+DOWN_2 = CSI + "2E"
 
-# ANSI color codes for terminal output
-BLUE = "\033[34m"
-GREEN = "\033[32m"
-RESET = "\033[0m"
+# Colors
+BLUE = CSI + "34m"
+GREEN = CSI + "32m"
+RESET = CSI + "0m"
 
-# Colored square character (full block)
+# Symbols
 BLOCK_CHAR = "█"
 
 # Landmark ID constants
@@ -23,15 +30,37 @@ LEFT_EYE_IDS = [33, 133, 159, 145]
 RIGHT_EYE_IDS = [362, 263, 386, 374]
 MOUTH_CORNER_IDS = [61, 291]
 
+########################################
+
+# Parse arguments
+parser = argparse.ArgumentParser(description="Run face detection with IPD and mouth width, optionally show face mesh.")
+parser.add_argument("--mesh", action="store_true", help="Draw the face mesh under the biometric lines")
+args = parser.parse_args()
+
+print("Initializing Mediapipe...", end="", flush=True)
+
+# Initialize Mediapipe Drawing (for optional mesh)
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(
+    static_image_mode=False, 
+    max_num_faces=1, 
+    min_detection_confidence=0.5
+)
+
+print("Done!")
+print("Initializing Webcam...")
+
 video_capture = cv2.VideoCapture(0)
 if not video_capture.isOpened():
     print("Error: Could not open webcam. Please check your device.")
     exit()
+print("Done!")
 
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, 
-                                  max_num_faces=1, 
-                                  min_detection_confidence=0.5)
+# Clear the terminal screen after initialization
+print(CLEAR_SCREEN_HOME, end="")
+print("Foam Dart Turret\n")
 
 def get_landmark_pixel(landmarks, frame_shape):
     return [
@@ -48,13 +77,10 @@ def get_eye_center(landmarks, frame_shape):
     center_y = sum(p[1] for p in eye_pixel) / len(eye_pixel)
     return int(center_x), int(center_y)
 
-def print_stats_tabular(ipd, mouth_width, after_clear):
+def print_stats_tabular(ipd, mouth_width):
     """Print stats in a tabular form with color-coded squares to the terminal."""
-    if after_clear:
-        # Move cursor to the top-left corner, move down 2 lines past "Foam Dart Turret" and blank line
-        print("\033[H", end="")
-        print("\033[2E", end="")
-    # If not after_clear, we simply do nothing special. We rely on initial logs until stable data.
+    print(CURSOR_HOME, end="")
+    print(DOWN_2, end="")
 
     data = [
         ("Interpupillary Distance (IPD):", f"{ipd:.2f} px", BLUE),
@@ -72,10 +98,6 @@ def print_stats_tabular(ipd, mouth_width, after_clear):
         print(line_str)
     print()
 
-after_clear = False
-initial_iterations = 0
-cleared_screen = False
-
 try:
     while True:
         ret, frame = video_capture.read()
@@ -85,8 +107,6 @@ try:
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = face_mesh.process(rgb_frame)
-
-        ipd, mouth_width = None, None
 
         if results.multi_face_landmarks:
             for face_landmarks in results.multi_face_landmarks:
@@ -102,21 +122,24 @@ try:
                 left_mouth_pixel, right_mouth_pixel = get_landmark_pixel([left_mouth_corner, right_mouth_corner], frame.shape)
                 mouth_width = calculate_distance(left_mouth_pixel, right_mouth_pixel)
 
+                # If --mesh is enabled, draw the face mesh underneath
+                if args.mesh:
+                    mp_drawing.draw_landmarks(
+                        frame,
+                        face_landmarks,
+                        mp_face_mesh.FACEMESH_TESSELATION,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
+                    )
+
                 # Draw lines on the video frame
+                # IPD line - blue
                 cv2.line(frame, left_eye_pixel, right_eye_pixel, (255, 0, 0), 2)
+                # Mouth line - green
                 cv2.line(frame, left_mouth_pixel, right_mouth_pixel, (0, 255, 0), 2)
 
-        if ipd is not None and mouth_width is not None:
-            initial_iterations += 1
-            # After a couple iterations, we assume logs have appeared and we can now clear
-            if initial_iterations == 2 and not cleared_screen:
-                # Clear and print title now that logs (if any) appeared
-                print("\033c", end="")
-                print("Foam Dart Turret\n")
-                cleared_screen = True
-                after_clear = True
-
-            print_stats_tabular(ipd, mouth_width, after_clear)
+        if ipd and mouth_width:
+            print_stats_tabular(ipd, mouth_width)
 
         cv2.imshow("Face Detection with Landmarks", frame)
         key = cv2.waitKey(1)
