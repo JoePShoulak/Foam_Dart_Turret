@@ -1,11 +1,10 @@
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF logs if possible
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow logs if possible
 
+import sys
 import cv2
 import mediapipe as mp
 import math
-import numpy as np
-import sys
 import argparse
 
 ########################################
@@ -17,10 +16,14 @@ CLEAR_SCREEN_HOME = CSI + "2J" + CSI + "H"  # Clear screen and move cursor home
 CURSOR_HOME = CSI + "H"
 DOWN_2 = CSI + "2E"
 
-# Colors
-BLUE = CSI + "34m"
-GREEN = CSI + "32m"
-RESET = CSI + "0m"
+# Terminal Text Colors
+BLUE_TEXT = CSI + "34m"
+GREEN_TEXT = CSI + "32m"
+RESET_TEXT = CSI + "0m"
+
+# Video Line Colors
+BLUE_RGB = (255, 0, 0)  # Blue line for IPD
+GREEN_RGB = (0, 255, 0)  # Green line for Mouth Width
 
 # Symbols
 BLOCK_CHAR = "█"
@@ -37,7 +40,9 @@ parser = argparse.ArgumentParser(description="Run face detection with IPD and mo
 parser.add_argument("--mesh", action="store_true", help="Draw the face mesh under the biometric lines")
 args = parser.parse_args()
 
-print("Initializing Mediapipe...", end="", flush=True)
+print("Initializing Mediapipe and Webcam...")
+# Suppress Mediapipe logs by redirecting stderr
+sys.stderr = open(os.devnull, 'w')
 
 # Initialize Mediapipe Drawing (for optional mesh)
 mp_drawing = mp.solutions.drawing_utils
@@ -49,29 +54,39 @@ face_mesh = mp_face_mesh.FaceMesh(
     min_detection_confidence=0.5
 )
 
-print("Done!")
-print("Initializing Webcam...")
+# Restore stderr after initialization
+sys.stderr.close()
+sys.stderr = sys.__stderr__
 
+# Initialize Webcam
 video_capture = cv2.VideoCapture(0)
 if not video_capture.isOpened():
     print("Error: Could not open webcam. Please check your device.")
     exit()
 print("Done!")
 
+# Clear screen state variables
+after_clear = False
+initial_iterations = 0
+cleared_screen = False
+
 # Clear the terminal screen after initialization
 print(CLEAR_SCREEN_HOME, end="")
 print("Foam Dart Turret\n")
 
+def calculate_distance(point1, point2):
+    """Calculate the Euclidean distance between two points."""
+    return math.sqrt((point2[0] - point1[0])**2 + (point2[1] - point1[1])**2)
+
 def get_landmark_pixel(landmarks, frame_shape):
+    """Convert normalized landmarks to pixel coordinates."""
     return [
         (int(landmark.x * frame_shape[1]), int(landmark.y * frame_shape[0]))
         for landmark in landmarks
     ]
 
-def calculate_distance(point1, point2):
-    return math.sqrt((point2[0] - point1[0])**2 + (point2[1] - point1[1])**2)
-
 def get_eye_center(landmarks, frame_shape):
+    """Calculate the center of the eye from landmarks."""
     eye_pixel = get_landmark_pixel(landmarks, frame_shape)
     center_x = sum(p[0] for p in eye_pixel) / len(eye_pixel)
     center_y = sum(p[1] for p in eye_pixel) / len(eye_pixel)
@@ -83,8 +98,8 @@ def print_stats_tabular(ipd, mouth_width):
     print(DOWN_2, end="")
 
     data = [
-        ("Interpupillary Distance (IPD):", f"{ipd:.2f} px", BLUE),
-        ("Mouth Width:", f"{mouth_width:.2f} px", GREEN),
+        ("Interpupillary Distance (IPD):", f"{ipd:.2f} px", BLUE_TEXT),
+        ("Mouth Width:", f"{mouth_width:.2f} px", GREEN_TEXT),
     ]
 
     max_label_len = max(len(label) for (label, value, color) in data)
@@ -94,7 +109,7 @@ def print_stats_tabular(ipd, mouth_width):
     for (label, value, color) in data:
         label_col = label.ljust(max_label_len)
         value_col = value.rjust(max_value_len)
-        line_str = f"{color}{BLOCK_CHAR}{RESET} {label_col}{' ' * spacing}{value_col}"
+        line_str = f"{color}{BLOCK_CHAR}{RESET_TEXT} {label_col}{' ' * spacing}{value_col}"
         print(line_str)
     print()
 
@@ -110,6 +125,7 @@ try:
 
         if results.multi_face_landmarks:
             for face_landmarks in results.multi_face_landmarks:
+                # Extract eye landmarks
                 left_eye_landmarks = [face_landmarks.landmark[i] for i in LEFT_EYE_IDS]
                 right_eye_landmarks = [face_landmarks.landmark[i] for i in RIGHT_EYE_IDS]
 
@@ -117,9 +133,12 @@ try:
                 right_eye_pixel = get_eye_center(right_eye_landmarks, frame.shape)
                 ipd = calculate_distance(left_eye_pixel, right_eye_pixel)
 
+                # Extract mouth landmarks
                 left_mouth_corner = face_landmarks.landmark[MOUTH_CORNER_IDS[0]]
                 right_mouth_corner = face_landmarks.landmark[MOUTH_CORNER_IDS[1]]
-                left_mouth_pixel, right_mouth_pixel = get_landmark_pixel([left_mouth_corner, right_mouth_corner], frame.shape)
+                left_mouth_pixel, right_mouth_pixel = get_landmark_pixel(
+                    [left_mouth_corner, right_mouth_corner], frame.shape
+                )
                 mouth_width = calculate_distance(left_mouth_pixel, right_mouth_pixel)
 
                 # If --mesh is enabled, draw the face mesh underneath
@@ -133,12 +152,19 @@ try:
                     )
 
                 # Draw lines on the video frame
-                # IPD line - blue
-                cv2.line(frame, left_eye_pixel, right_eye_pixel, (255, 0, 0), 2)
-                # Mouth line - green
-                cv2.line(frame, left_mouth_pixel, right_mouth_pixel, (0, 255, 0), 2)
+                cv2.line(frame, left_eye_pixel, right_eye_pixel, BLUE_RGB, 2)  # IPD line
+                cv2.line(frame, left_mouth_pixel, right_mouth_pixel, GREEN_RGB, 2)  # Mouth Width line
 
         if ipd and mouth_width:
+            initial_iterations += 1
+            # After a couple iterations, we assume logs have appeared and we can now clear
+            if initial_iterations == 2 and not cleared_screen:
+                # Clear and print title now that logs hopefully won't appear anymore
+                print(CLEAR_SCREEN_HOME, end="")
+                print("Foam Dart Turret\n")
+                cleared_screen = True
+                after_clear = True
+
             print_stats_tabular(ipd, mouth_width)
 
         cv2.imshow("Face Detection with Landmarks", frame)
