@@ -1,6 +1,3 @@
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow logs if possible
-
 import sys
 import cv2
 import mediapipe as mp
@@ -31,7 +28,7 @@ BLOCK_CHAR = "█"
 # Landmark ID constants
 LEFT_EYE_IDS = [33, 133, 159, 145]
 RIGHT_EYE_IDS = [362, 263, 386, 374]
-MOUTH_CORNER_IDS = [61, 291]
+MOUTH_CENTER_ID = 0
 #########################################
 
 # Parse arguments
@@ -40,8 +37,6 @@ parser.add_argument("--mesh", action="store_true", help="Draw the face mesh unde
 args = parser.parse_args()
 
 print("Initializing Mediapipe and Webcam...", end="")
-# Suppress Mediapipe logs by redirecting stderr
-sys.stderr = open(os.devnull, 'w')
 
 # Initialize Mediapipe Drawing (for optional mesh)
 mp_drawing = mp.solutions.drawing_utils
@@ -96,9 +91,15 @@ def print_stats_tabular(ipd, eye_to_mouth):
     print(CURSOR_HOME, end="")
     print(DOWN_2, end="")
 
+    real_ipd = 33 * 56 / ipd
+    real_etm = 33 * 52 / eye_to_mouth
+
+    distance = real_etm if eye_to_mouth / ipd > 76 / 23 else real_ipd
+
     data = [
-        ("Interpupillary Distance (IPD):", f"{ipd:.2f} px", IPD_TERMINAL_FORMAT),
-        ("Eye-to-Mouth Distance:", f"{eye_to_mouth:.2f} px", EYE_TO_MOUTH_TERMINAL_FORMAT),
+        ("Interpupillary Distance (IPD):", f"{real_ipd:.2f} in", IPD_TERMINAL_FORMAT),
+        ("Eye-to-Mouth Distance:", f"{real_etm:.2f} in", EYE_TO_MOUTH_TERMINAL_FORMAT),
+        ("Approx Distance:", f"{distance:.2f} in", (255, 255, 255))
     ]
 
     max_label_len = max(len(label) for (label, value, color) in data)
@@ -122,6 +123,9 @@ try:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = face_mesh.process(rgb_frame)
 
+        ipd = None
+        eye_to_mouth = None
+
         if results.multi_face_landmarks:
             for face_landmarks in results.multi_face_landmarks:
                 # Extract eye landmarks
@@ -137,16 +141,7 @@ try:
                 ipd = calculate_distance(left_eye_pixel, right_eye_pixel)
 
                 # Extract mouth landmarks
-                left_mouth_corner = face_landmarks.landmark[MOUTH_CORNER_IDS[0]]
-                right_mouth_corner = face_landmarks.landmark[MOUTH_CORNER_IDS[1]]
-                left_mouth_pixel, right_mouth_pixel = get_landmark_pixel(
-                    [left_mouth_corner, right_mouth_corner], frame.shape
-                )
-                mouth_width = calculate_distance(left_mouth_pixel, right_mouth_pixel)
-                mouth_center = (
-                    (left_mouth_pixel[0] + right_mouth_pixel[0]) // 2,
-                    (left_mouth_pixel[1] + right_mouth_pixel[1]) // 2,
-                )
+                mouth_center = get_landmark_pixel([face_landmarks.landmark[MOUTH_CENTER_ID]], frame.shape)[0]
 
                 # Calculate Eye-to-Mouth Distance
                 eye_to_mouth = calculate_distance(eye_center, mouth_center)
