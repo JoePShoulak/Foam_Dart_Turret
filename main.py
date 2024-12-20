@@ -32,11 +32,6 @@ BLOCK_CHAR = "█"
 LEFT_EYE_IDS = [33, 133, 159, 145]
 RIGHT_EYE_IDS = [362, 263, 386, 374]
 MOUTH_CORNER_IDS = [61, 291]
-NOSE_TIP_ID = 1
-CHIN_ID = 152
-NOSE_WIDTH_IDS = [168, 5]
-FACE_WIDTH_IDS = [234, 454]
-JAWLINE_IDS = [132, 361]
 #########################################
 
 # Parse arguments
